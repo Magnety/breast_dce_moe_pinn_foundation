@@ -1,0 +1,103 @@
+seed: 2026
+
+data:
+  manifest_path: /home/ubuntu/liuyiyao/breast_pcr/src/breast_mri_ai/breast_dce_moe_pinn_foundation/configs/foundation_manifest_full_v4.csv
+  dataset_root: /home/ubuntu/liuyiyao1/multimodal_dataset
+  # 预训练默认使用 manifest 中的全部样本（不按 split / dataset 过滤）。
+  # 如果想限制到某些 dataset，可以填 include_datasets，例如 [ispy2, duke]。
+  # 如果想换回旧行为，加上 train_split: train 即可。
+  train_split: null
+  modalities: [DCE, T1, T2, DWI, ADC, derived]
+  target_shape: [64, 128, 128]
+  # 每个 sample 最多保留多少个 volume。把它压到实际数据的 p75 而不是奢侈值，
+  # 直接降低 worker 端 IO/IPC 量：batch tensor 大小 ∝ V，wait 时间也大致 ∝ V。
+  # 数据实测中位数若是 4-6，把它设到 6-8；若数据基本都有 12+，再调高。
+  max_volumes: 8
+  normalize: true
+  cache:
+    enabled: true
+    dir: /home/ubuntu/liuyiyao1/multimodal_dataset/.breast_dce_moe_pinn_cache
+    after_normalize: true
+    # 用 mmap 读取已经建好的 cache：操作系统按 page lazy-load，
+    # page cache 命中时近似 memcpy 速度。不带 mmap 时每个 4MB npy 都要
+    # full-read+copy 到用户态，是当前 wait 的主要来源。
+    npy_mmap_mode: "r"
+  include_datasets: []
+  exclude_datasets: []
+  augmentation:
+    enabled: true
+    flip_prob: 0.5
+    noise_prob: 0.2
+    noise_std: 0.03
+    scale_prob: 0.3
+    scale_range: [0.9, 1.1]
+    shift_prob: 0.3
+    shift_range: [-0.05, 0.05]
+
+model:
+  image_size: [64, 128, 128]
+  patch_size: [8, 16, 16]
+  in_channels: 1
+  embed_dim: 128
+  num_heads: 4
+  encoder_depth: 2
+  temporal_depth: 2
+  lesion_queries: 8
+  moe_top_k: 2
+  subtype_classes: 4
+  mask_ratio: 0.4
+  channels_last_3d: true
+
+training:
+  epochs: 10000
+  # batch_size 从 32 降到 16：当前 fwd=145ms 说明 GPU 算力其实没吃满，
+  # 而 worker 拼一个 32×8=256 个 volume 的 batch 太重（IO + collate ~1500ms）。
+  # 减小 batch 体积 → wait 时间近线性下降，每秒 step 数反而上升。
+  batch_size: 16
+  # CPU augment 已搬到 GPU，worker 只负责 mmap+crop+normalize；
+  # 8 worker 已经够喂满 GPU；继续加 worker 反而会让 IPC 共享内存竞争变重。
+  num_workers: 8
+  # batch tensor 在 V=8 之后约 0.5 GB；prefetch_factor=2 单 rank 缓冲 16 个 batch ≈ 8 GB。
+  prefetch_factor: 2
+  persistent_workers: true
+  # pin_memory：恢复 true（参考实现也用），加速 H2D。如果你的 ulimit -l 没扩，
+  # 启动时会报 ``CUDA error: invalid argument``，这时 ulimit -l unlimited 后再试。
+  pin_memory: true
+  cuda_prefetch: true
+  drop_last: false
+  multiprocessing_context: spawn
+  log_interval: 20
+  progress_bar: false
+  eval_interval: 0
+  checkpoint_interval: 5
+  save_checkpoints: true
+  save_last_checkpoint: true
+  save_best_checkpoint: true
+  lr: 0.0001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  amp: true
+  optimizer_foreach: true
+  optimizer_fused: true
+  resume_path:
+
+performance:
+  cpu_num_threads: 1
+  cudnn_benchmark: true
+  allow_tf32: true
+  # DDP: 关闭 find_unused_parameters，开 static_graph。
+  # 配合模型 forward 末尾的 _param_anchor()（0 系数全参数 sum），
+  # 保证每步 used-set 完全一致，避免 NCCL all_reduce 与 reducer 卡死。
+  ddp_static_graph: true
+  ddp_find_unused_parameters: false
+  ddp_gradient_as_bucket_view: true
+  torch_compile: false
+
+loss:
+  lambda_mae: 1.0
+  lambda_phase_order: 0.1
+  lambda_pinn: 1.0
+  lambda_moe_balance: 0.01
+
+output:
+  root: outputs/breast_dce_moe_pinn/pretrain
