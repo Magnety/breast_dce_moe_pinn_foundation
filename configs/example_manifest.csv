@@ -1,6 +1,0 @@
-patient_id,sample_id,dataset_id,visit_timepoint,split,modality,phase_index,relative_time,path,pCR,HER2,ER,PR,HR,molecular_subtype,survival_time,survival_event
-demo_patient_001,demo_patient_001_MRI1,ispy2,MRI1,train,DCE,0,0.0,examples/demo_patient_001/dce_phase0.npy,1,0,1,1,1,0,1200,0
-demo_patient_001,demo_patient_001_MRI1,ispy2,MRI1,train,DCE,1,1.0,examples/demo_patient_001/dce_phase1.npy,1,0,1,1,1,0,1200,0
-demo_patient_001,demo_patient_001_MRI1,ispy2,MRI1,train,T2,,0.0,examples/demo_patient_001/t2.npy,1,0,1,1,1,0,1200,0
-demo_patient_002,demo_patient_002_MRI1,duke,MRI1,val,DCE,0,0.0,examples/demo_patient_002/dce_phase0.npy,,1,0,0,0,3,800,1
-demo_patient_002,demo_patient_002_MRI1,duke,MRI1,val,ADC,,0.0,examples/demo_patient_002/adc.npy,,1,0,0,0,3,800,1
