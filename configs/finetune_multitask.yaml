@@ -1,0 +1,153 @@
+seed: 2026
+
+data:
+  manifest_path: /home/ubuntu/liuyiyao/breast_pcr/src/breast_mri_ai/breast_dce_moe_pinn_foundation/configs/foundation_manifest_full_v4.csv
+  dataset_root: /home/ubuntu/liuyiyao1/multimodal_dataset
+  # ---- Split selection ---------------------------------------------------
+  # 微调时通过 split_strategy 控制训练 / 推理样本的划分。支持四种 mode：
+  #   * all         : 训练集=全部样本，推理集为空（一般只在调参时用）。
+  #   * manifest    : 沿用 manifest 自带的 split 列（默认行为）。
+  #   * by_dataset  : 选若干 dataset_id 作为训练，剩余作为推理 / 测试。
+  #   * by_ratio    : 按比例随机划分（基于 patient/sample 哈希，结果稳定）。
+  #
+  # 例：
+  # split_strategy:
+  #   mode: by_dataset
+  #   train_datasets: [ispy2, duke]
+  #   test_datasets: [fujian_pCR]    # 留空表示其余 dataset 都进推理集
+  #
+  # split_strategy:
+  #   mode: by_ratio
+  #   train_ratio: 0.7
+  #   seed: 2026
+  split_strategy:
+    mode: manifest
+    train_split: train
+    val_split: val
+    test_split: test
+  # 这两组列表对所有 mode 生效，常用于把噪声很大的 dataset 完全丢掉。
+  include_datasets: []
+  exclude_datasets: []
+  # 兼容字段：仅在没有写 split_strategy 时生效。
+  train_split: train
+  val_split: val
+  modalities: [DCE, T1, T2, DWI, ADC, derived]
+  target_shape: [64, 128, 128]
+  max_volumes: 12
+  normalize: true
+  cache:
+    enabled: true
+    dir: /home/ubuntu/liuyiyao1/multimodal_dataset/.breast_dce_moe_pinn_cache
+    after_normalize: true
+    npy_mmap_mode: "r"
+  augmentation:
+    enabled: true
+    flip_prob: 0.5
+    noise_prob: 0.2
+    noise_std: 0.03
+    scale_prob: 0.3
+    scale_range: [0.9, 1.1]
+    shift_prob: 0.3
+    shift_range: [-0.05, 0.05]
+  label_columns:
+    pCR: pCR
+    HER2: HER2
+    ER: ER
+    PR: PR
+    HR: HR
+    molecular_subtype: molecular_subtype
+    survival_time: survival_time
+    survival_event: survival_event
+
+model:
+  image_size: [64, 128, 128]
+  patch_size: [16, 16, 4]
+  in_channels: 1
+  embed_dim: 512
+  num_heads: 8
+  encoder_depth: 8
+  temporal_depth: 6
+  temporal_patch_chunk_size: 128
+  lesion_queries: 24
+  moe_top_k: 2
+  moe_num_experts: 12
+  encoder_mlp_ratio: 8.0
+  temporal_mlp_ratio: 6.0
+  moe_hidden_ratio: 4.0
+  moe_gate_hidden_ratio: 2.0
+  lesion_pool_ratio: 2.0
+  fusion_hidden_ratio: 2.0
+  pinn_hidden_dim: 256
+  subtype_classes: 4
+  mask_ratio: 0.4
+  channels_last_3d: true
+
+training:
+  pretrained_checkpoint:
+  resume_path:
+  epochs: 50
+  batch_size: 2
+  num_workers: 4
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+  # sample-packed cache 命中后，更适合让多个 worker 并行拉 sample，
+  # 再在 CUDA 侧组 batch，而不是单个 worker 串行构完整批。
+  dataset_batch_fetch: false
+  cuda_prefetch: true
+  # 多卡下这里改回 FIFO：配合 volume-balanced sampler，保住“每个全局 step
+  # 各 rank 负载已配平”的顺序，不再让 worker 返回顺序把它打散。
+  in_order: true
+  # sample-packed cache 已经把每个 sample 的磁盘访问收敛到一次 open，
+  # 这里改为默认延迟到 CUDA 侧组 batch，保留 worker 间的 sample 并行度。
+  defer_cpu_batch_stack: true
+  # 多卡默认开启：按 real volume 数均衡 rank 负载，优先解决
+  # “一张卡还在忙、其余卡已经在等”的 DDP straggler。
+  volume_balanced_sampling: true
+  drop_last: false
+  multiprocessing_context: spawn
+  log_interval: 20
+  progress_bar: true
+  eval_interval: 5
+  checkpoint_interval: 0
+  save_checkpoints: true
+  save_last_checkpoint: true
+  save_best_checkpoint: true
+  lr: 0.00005
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  amp: true
+  optimizer_foreach: true
+  optimizer_fused: true
+  freeze_strategy:
+    stage1_freeze_backbone_epochs: 5
+    stage2_unfreeze_temporal_pinn_moe_epochs: 15
+    stage3_full_finetune: true
+
+performance:
+  cpu_num_threads: 1
+  cudnn_benchmark: true
+  allow_tf32: true
+  ddp_static_graph: false
+  ddp_find_unused_parameters: true
+  ddp_gradient_as_bucket_view: true
+  torch_compile: false
+  torch_compile_mode: max-autotune-no-cudagraphs
+
+loss:
+  task_weights:
+    pCR: 1.0
+    HER2: 0.7
+    ER: 0.5
+    PR: 0.5
+    HR: 0.5
+    molecular_subtype: 0.5
+    survival: 0.5
+
+evaluation:
+  threshold: 0.5
+  monitor: pCR_auc
+  metrics: [auc, acc, f1, sensitivity, specificity, ppv, npv, calibration, c_index]
+
+output:
+  root: outputs/breast_dce_moe_pinn/finetune
